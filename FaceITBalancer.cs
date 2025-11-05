@@ -20,7 +20,7 @@ public class FaceITBalancer : BasePlugin
     public override string ModuleName => "FaceIT Team Balancer";
     public override string ModuleVersion => "0.1.4-Beta";
     public override string ModuleAuthor => "Larry Lacurte.ro";
-    public override string ModuleDescription => "Echilibreaza echipele dupa ELO-ul FaceIT";
+    public override string ModuleDescription => "Balances teams based on FaceIT ELO ratings";
 
     private Dictionary<ulong, PlayerData> _playerData = new();
     private HttpClient _httpClient = new();
@@ -52,12 +52,12 @@ public class FaceITBalancer : BasePlugin
         
         if (_apiEnabled)
         {
-            Console.WriteLine("[FaceIT] ✅ Plugin incarcat cu API support!");
+            Console.WriteLine("[FaceIT] ✅ Plugin loaded with API support!");
         }
         else
         {
-            Console.WriteLine("[FaceIT] ✅ Plugin incarcat (mod manual)");
-            Console.WriteLine("[FaceIT] 💡 Jucatorii pot folosi !setlevel [1-10] sau !setelo [ELO]");
+            Console.WriteLine("[FaceIT] ✅ Plugin loaded (manual mode)");
+            Console.WriteLine("[FaceIT] 💡 Players can use !setlevel [1-10] or !setelo [ELO]");
         }
     }
 
@@ -67,7 +67,7 @@ public class FaceITBalancer : BasePlugin
         
         if (!File.Exists(configPath))
         {
-            Console.WriteLine("[FaceIT] ❌ config.json nu exista!");
+            Console.WriteLine("[FaceIT] ❌ config.json does not exist!");
             CreateDefaultConfig(configPath);
             return;
         }
@@ -77,12 +77,12 @@ public class FaceITBalancer : BasePlugin
             var json = File.ReadAllText(configPath);
             var config = JsonSerializer.Deserialize<PluginConfig>(json);
             
-            if (config != null && !string.IsNullOrEmpty(config.ApiKey) && config.ApiKey != "API_KEY_AICI")
+            if (config != null && !string.IsNullOrEmpty(config.ApiKey) && config.ApiKey != "API_KEY_HERE")
             {
                 _apiKey = config.ApiKey;
                 _apiEnabled = true;
                 
-                // Adauga header-ul Authorization corect pentru FaceIT API
+                // Add correct Authorization header for FaceIT API
                 if (!_apiKey.StartsWith("Bearer "))
                 {
                     _apiKey = "Bearer " + _apiKey;
@@ -90,17 +90,17 @@ public class FaceITBalancer : BasePlugin
                 
                 _httpClient.DefaultRequestHeaders.Clear();
                 _httpClient.DefaultRequestHeaders.Add("Authorization", _apiKey);
-                Console.WriteLine($"[FaceIT] ✅ API Key configurat: {_apiKey.Substring(0, Math.Min(15, _apiKey.Length))}...");
+                Console.WriteLine($"[FaceIT] ✅ API Key configured: {_apiKey.Substring(0, Math.Min(15, _apiKey.Length))}...");
             }
             else
             {
-                Console.WriteLine("[FaceIT] ℹ️  API Key neconfigurat - foloseste mod manual");
+                Console.WriteLine("[FaceIT] ℹ️  API Key not configured - using manual mode");
                 _apiEnabled = false;
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FaceIT] ❌ Eroare la incarcarea config.json: {ex.Message}");
+            Console.WriteLine($"[FaceIT] ❌ Error loading config.json: {ex.Message}");
             _apiEnabled = false;
         }
     }
@@ -109,7 +109,7 @@ public class FaceITBalancer : BasePlugin
     {
         var defaultConfig = new PluginConfig
         {
-            ApiKey = "API_KEY_AICI",
+            ApiKey = "API_KEY_HERE",
             AutoBalance = false,
             MinPlayers = 10
         };
@@ -118,32 +118,32 @@ public class FaceITBalancer : BasePlugin
         var json = JsonSerializer.Serialize(defaultConfig, options);
         File.WriteAllText(configPath, json);
         
-        Console.WriteLine($"[FaceIT] 📁 Config creat: {configPath}");
-        Console.WriteLine("[FaceIT] ⚠️  Configureaza API Key in fisierul config!");
+        Console.WriteLine($"[FaceIT] 📁 Config created: {configPath}");
+        Console.WriteLine("[FaceIT] ⚠️  Configure API Key in config file!");
     }
 
     private void RegisterCommands()
     {
-        // Comenzi help si info
-        AddCommand("css_faceit", "Ajutor pentru comenzi FaceIT", OnFaceITHelpCommand);
-        AddCommand("css_faceit_help", "Ajutor pentru comenzi FaceIT", OnFaceITHelpCommand);
+        // Help and info commands
+        AddCommand("css_faceit", "FaceIT commands help", OnFaceITHelpCommand);
+        AddCommand("css_faceit_help", "FaceIT commands help", OnFaceITHelpCommand);
         
-        // Comenzi admin
-        AddCommand("css_fbalance", "Echilibreaza echipele", OnBalanceCommand);
-        AddCommand("css_fbalance5v5", "Echilibreaza 5v5", OnBalance5v5Command);
-        AddCommand("css_getfaceit_all", "Incarca date FaceIT pentru toti jucatorii", OnGetFaceITAllCommand);
+        // Admin commands
+        AddCommand("css_fbalance", "Balance teams", OnBalanceCommand);
+        AddCommand("css_fbalance5v5", "Balance 5v5", OnBalance5v5Command);
+        AddCommand("css_getfaceit_all", "Load FaceIT data for all players", OnGetFaceITAllCommand);
         
-        // Comenzi jucatori
-        AddCommand("css_getfaceit", "Incarca date FaceIT", OnGetFaceITCommand);
-        AddCommand("css_setlevel", "Seteaza level manual", OnSetLevelCommand);
-        AddCommand("css_setelo", "Seteaza ELO manual", OnSetELOCommand);
-        AddCommand("css_myfaceit", "Vezi datele tale", OnMyFaceITCommand);
+        // Player commands
+        AddCommand("css_getfaceit", "Load FaceIT data", OnGetFaceITCommand);
+        AddCommand("css_setlevel", "Set level manually", OnSetLevelCommand);
+        AddCommand("css_setelo", "Set ELO manually", OnSetELOCommand);
+        AddCommand("css_myfaceit", "View your data", OnMyFaceITCommand);
         
-        // Comenzi admin pentru vizualizare date
-        AddCommand("css_playersdata", "Vezi datele tuturor jucatorilor", OnPlayersDataCommand);
+        // Admin data viewing commands
+        AddCommand("css_playersdata", "View all players data", OnPlayersDataCommand);
     }
 
-    // ================== COMENDA HELP ==================
+    // ================== HELP COMMAND ==================
     [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
     public void OnFaceITHelpCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -158,52 +158,52 @@ public class FaceITBalancer : BasePlugin
 
     private void ShowHelpInConsole()
     {
-        Console.WriteLine("[FaceIT] 📖 COMENZI DISPONIBILE:");
+        Console.WriteLine("[FaceIT] 📖 AVAILABLE COMMANDS:");
         Console.WriteLine("[FaceIT] =========================");
-        Console.WriteLine("[FaceIT] 🔹 !faceit / !faceit_help - Afiseaza acest ajutor");
+        Console.WriteLine("[FaceIT] 🔹 !faceit / !faceit_help - Show this help");
         Console.WriteLine("[FaceIT] ");
-        Console.WriteLine("[FaceIT] 👤 COMENZI JUCATORI:");
-        Console.WriteLine("[FaceIT] 🔹 !getfaceit - Incarca datele tale de pe FaceIT");
-        Console.WriteLine("[FaceIT] 🔹 !setlevel [1-10] - Seteaza level manual");
-        Console.WriteLine("[FaceIT] 🔹 !setelo [ELO] - Seteaza ELO manual (1-3900)");
-        Console.WriteLine("[FaceIT] 🔹 !myfaceit - Vezi datele tale incarcate");
+        Console.WriteLine("[FaceIT] 👤 PLAYER COMMANDS:");
+        Console.WriteLine("[FaceIT] 🔹 !getfaceit - Load your data from FaceIT");
+        Console.WriteLine("[FaceIT] 🔹 !setlevel [1-10] - Set level manually");
+        Console.WriteLine("[FaceIT] 🔹 !setelo [ELO] - Set ELO manually (1-3900)");
+        Console.WriteLine("[FaceIT] 🔹 !myfaceit - View your loaded data");
         Console.WriteLine("[FaceIT] ");
-        Console.WriteLine("[FaceIT] ⚡ COMENZI ADMIN:");
-        Console.WriteLine("[FaceIT] 🔹 !getfaceit_all - Incarca date pentru toti jucatorii");
-        Console.WriteLine("[FaceIT] 🔹 !playersdata - Vezi datele tuturor jucatorilor");
-        Console.WriteLine("[FaceIT] 🔹 !fbalance - Echilibreaza echipele dupa ELO");
-        Console.WriteLine("[FaceIT] 🔹 !fbalance5v5 - Echilibreaza 5v5 dupa ELO");
+        Console.WriteLine("[FaceIT] ⚡ ADMIN COMMANDS:");
+        Console.WriteLine("[FaceIT] 🔹 !getfaceit_all - Load data for all players");
+        Console.WriteLine("[FaceIT] 🔹 !playersdata - View all players data");
+        Console.WriteLine("[FaceIT] 🔹 !fbalance - Balance teams by ELO");
+        Console.WriteLine("[FaceIT] 🔹 !fbalance5v5 - Balance 5v5 by ELO");
         Console.WriteLine("[FaceIT] ");
-        Console.WriteLine("[FaceIT] 💡 Nota: Echilibrarea se face dupa ELO, nu dupa level!");
+        Console.WriteLine("[FaceIT] 💡 Note: Balancing is done by ELO, not by level!");
     }
 
     private void ShowHelpInChat(CCSPlayerController player)
     {
-        player.PrintToChat(" [FaceIT] 📖 COMENZI DISPONIBILE:");
+        player.PrintToChat(" [FaceIT] 📖 AVAILABLE COMMANDS:");
         player.PrintToChat(" [FaceIT] =========================");
-        player.PrintToChat(" [FaceIT] 🔹 !faceit / !faceit_help - Acest ajutor");
+        player.PrintToChat(" [FaceIT] 🔹 !faceit / !faceit_help - This help");
         player.PrintToChat(" [FaceIT] ");
-        player.PrintToChat(" [FaceIT] 👤 COMENZI JUCATORI:");
-        player.PrintToChat(" [FaceIT] 🔹 !getfaceit - Datele tale de pe FaceIT");
-        player.PrintToChat(" [FaceIT] 🔹 !setlevel [1-10] - Level manual");
-        player.PrintToChat(" [FaceIT] 🔹 !setelo [ELO] - ELO manual (1-3900)");
-        player.PrintToChat(" [FaceIT] 🔹 !myfaceit - Vezi datele tale");
+        player.PrintToChat(" [FaceIT] 👤 PLAYER COMMANDS:");
+        player.PrintToChat(" [FaceIT] 🔹 !getfaceit - Your FaceIT data");
+        player.PrintToChat(" [FaceIT] 🔹 !setlevel [1-10] - Manual level");
+        player.PrintToChat(" [FaceIT] 🔹 !setelo [ELO] - Manual ELO (1-3900)");
+        player.PrintToChat(" [FaceIT] 🔹 !myfaceit - View your data");
         
         if (HasAdminPermissions(player))
         {
             player.PrintToChat(" [FaceIT] ");
-            player.PrintToChat(" [FaceIT] ⚡ COMENZI ADMIN:");
-            player.PrintToChat(" [FaceIT] 🔹 !getfaceit_all - Date pentru toti jucatorii");
-            player.PrintToChat(" [FaceIT] 🔹 !playersdata - Datele tuturor jucatorilor");
-            player.PrintToChat(" [FaceIT] 🔹 !fbalance - Echilibreaza echipele");
-            player.PrintToChat(" [FaceIT] 🔹 !fbalance5v5 - Echilibreaza 5v5");
+            player.PrintToChat(" [FaceIT] ⚡ ADMIN COMMANDS:");
+            player.PrintToChat(" [FaceIT] 🔹 !getfaceit_all - Data for all players");
+            player.PrintToChat(" [FaceIT] 🔹 !playersdata - All players data");
+            player.PrintToChat(" [FaceIT] 🔹 !fbalance - Balance teams");
+            player.PrintToChat(" [FaceIT] 🔹 !fbalance5v5 - Balance 5v5");
         }
         
         player.PrintToChat(" [FaceIT] ");
-        player.PrintToChat(" [FaceIT] 💡 Echilibrarea se face dupa ELO!");
+        player.PrintToChat(" [FaceIT] 💡 Balancing is done by ELO!");
     }
 
-    // ================== COMENZI API ==================
+    // ================== API COMMANDS ==================
     [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
     public void OnGetFaceITCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -218,19 +218,19 @@ public class FaceITBalancer : BasePlugin
 
         if (steamID == 0)
         {
-            player.PrintToChat(" [FaceIT] ❌ Nu pot obtine SteamID");
+            player.PrintToChat(" [FaceIT] ❌ Cannot get SteamID");
             Console.WriteLine($"[FaceIT] ❌ Invalid SteamID: {steamID}");
             return;
         }
 
         if (!_apiEnabled)
         {
-            player.PrintToChat(" [FaceIT] ❌ API-ul nu este configurat");
-            player.PrintToChat(" [FaceIT] 💡 Foloseste !setlevel pentru setare manuala");
+            player.PrintToChat(" [FaceIT] ❌ API is not configured");
+            player.PrintToChat(" [FaceIT] 💡 Use !setlevel for manual setup");
             return;
         }
 
-        player.PrintToChat(" [FaceIT] 🔍 Se cauta datele tale...");
+        player.PrintToChat(" [FaceIT] 🔍 Searching for your data...");
         _ = FetchFaceITData(player, steamID.ToString());
     }
 
@@ -241,13 +241,13 @@ public class FaceITBalancer : BasePlugin
 
         if (!HasAdminPermissions(player))
         {
-            player.PrintToChat(" [FaceIT] ❌ Nu ai permisiune pentru aceasta comanda!");
+            player.PrintToChat(" [FaceIT] ❌ You don't have permission for this command!");
             return;
         }
 
         if (!_apiEnabled)
         {
-            player.PrintToChat(" [FaceIT] ❌ API-ul nu este configurat");
+            player.PrintToChat(" [FaceIT] ❌ API is not configured");
             return;
         }
 
@@ -257,12 +257,12 @@ public class FaceITBalancer : BasePlugin
 
         if (players.Count == 0)
         {
-            player.PrintToChat(" [FaceIT] ❌ Nu sunt jucatori pe server");
+            player.PrintToChat(" [FaceIT] ❌ No players on server");
             return;
         }
 
-        player.PrintToChat($" [FaceIT] 🔍 Se incarca datele pentru {players.Count} jucatori...");
-        Server.PrintToChatAll($" [FaceIT] 🔍 Adminul incarca date FaceIT pentru toti jucatorii...");
+        player.PrintToChat($" [FaceIT] 🔍 Loading data for {players.Count} players...");
+        Server.PrintToChatAll($" [FaceIT] 🔍 Admin is loading FaceIT data for all players...");
 
         _ = FetchFaceITDataForAllPlayers(players, player);
     }
@@ -290,7 +290,7 @@ public class FaceITBalancer : BasePlugin
                             ParseFaceITResponse(player, json);
                             successCount++;
                             
-                            // Mica pauza intre request-uri pentru a evita rate limiting
+                            // Small delay between requests to avoid rate limiting
                             await Task.Delay(500);
                         }
                         else
@@ -312,10 +312,10 @@ public class FaceITBalancer : BasePlugin
             }
         }
 
-        adminPlayer.PrintToChat($" [FaceIT] ✅ Date incarcate pentru {successCount} jucatori");
+        adminPlayer.PrintToChat($" [FaceIT] ✅ Data loaded for {successCount} players");
         if (errorCount > 0)
         {
-            adminPlayer.PrintToChat($" [FaceIT] ⚠️  Erori la {errorCount} jucatori");
+            adminPlayer.PrintToChat($" [FaceIT] ⚠️  Errors for {errorCount} players");
         }
         
         Console.WriteLine($"[FaceIT] ✅ Bulk data load complete: {successCount} success, {errorCount} errors");
@@ -341,38 +341,38 @@ public class FaceITBalancer : BasePlugin
             }
             else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                player.PrintToChat(" [FaceIT] ❌ Eroare de autentificare (API Key invalid)");
-                Console.WriteLine($"[FaceIT] ❌ API Key invalid sau expirat");
+                player.PrintToChat(" [FaceIT] ❌ Authentication error (Invalid API Key)");
+                Console.WriteLine($"[FaceIT] ❌ API Key invalid or expired");
             }
             else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                player.PrintToChat(" [FaceIT] ❌ Jucatorul nu a fost gasit pe FaceIT");
+                player.PrintToChat(" [FaceIT] ❌ Player not found on FaceIT");
                 Console.WriteLine($"[FaceIT] ❌ Player not found on FaceIT");
             }
             else if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
             {
-                player.PrintToChat(" [FaceIT] ❌ Prea multe request-uri. Asteapta putin.");
+                player.PrintToChat(" [FaceIT] ❌ Too many requests. Please wait.");
                 Console.WriteLine($"[FaceIT] ❌ Rate limit exceeded");
             }
             else
             {
-                player.PrintToChat(" [FaceIT] ❌ Eroare la obtinerea datelor");
+                player.PrintToChat(" [FaceIT] ❌ Error getting data");
                 Console.WriteLine($"[FaceIT] ❌ API Error: {response.StatusCode}");
             }
         }
         catch (HttpRequestException ex)
         {
-            player.PrintToChat(" [FaceIT] ❌ Eroare de retea");
+            player.PrintToChat(" [FaceIT] ❌ Network error");
             Console.WriteLine($"[FaceIT] ❌ Network Error: {ex.Message}");
         }
         catch (TaskCanceledException)
         {
-            player.PrintToChat(" [FaceIT] ❌ Timeout la conexiunea cu FaceIT");
+            player.PrintToChat(" [FaceIT] ❌ Timeout connecting to FaceIT");
             Console.WriteLine($"[FaceIT] ❌ Request timeout");
         }
         catch (Exception ex)
         {
-            player.PrintToChat(" [FaceIT] ❌ Eroare neasteptata");
+            player.PrintToChat(" [FaceIT] ❌ Unexpected error");
             Console.WriteLine($"[FaceIT] ❌ Unexpected Error: {ex.Message}");
         }
     }
@@ -386,7 +386,7 @@ public class FaceITBalancer : BasePlugin
             using JsonDocument doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            // Verifica daca exista erori in raspuns
+            // Check if there are errors in response
             if (root.TryGetProperty("errors", out var errors))
             {
                 foreach (var error in errors.EnumerateArray())
@@ -401,12 +401,12 @@ public class FaceITBalancer : BasePlugin
                 }
             }
 
-            // Extrage nickname
+            // Extract nickname
             var nickname = root.TryGetProperty("nickname", out var nicknameElement) 
                 ? nicknameElement.GetString() ?? player.PlayerName 
                 : player.PlayerName;
 
-            // Extrage datele CS2
+            // Extract CS2 data
             int skillLevel = 1;
             int faceitElo = 500;
             
@@ -427,12 +427,12 @@ public class FaceITBalancer : BasePlugin
             }
             else
             {
-                player.PrintToChat(" [FaceIT] ⚠️  Nu s-au gasit date pentru CS2");
+                player.PrintToChat(" [FaceIT] ⚠️  No CS2 data found");
                 Console.WriteLine($"[FaceIT] ⚠️  No CS2 data found in response");
                 return;
             }
 
-            // Salveaza datele
+            // Save data
             _playerData[player.SteamID] = new PlayerData
             {
                 Level = skillLevel,
@@ -441,25 +441,25 @@ public class FaceITBalancer : BasePlugin
                 DataLoaded = true
             };
 
-            player.PrintToChat($" [FaceIT] ✅ Date incarcate: {nickname}");
+            player.PrintToChat($" [FaceIT] ✅ Data loaded: {nickname}");
             player.PrintToChat($" [FaceIT] 🎯 Level: {skillLevel} | ELO: {faceitElo}");
             
             Console.WriteLine($"[FaceIT] ✅ Data loaded for {nickname}: Level {skillLevel}, ELO {faceitElo}");
         }
         catch (JsonException ex)
         {
-            player.PrintToChat(" [FaceIT] ❌ Eroare la interpretarea datelor");
+            player.PrintToChat(" [FaceIT] ❌ Error parsing data");
             Console.WriteLine($"[FaceIT] ❌ JSON Parse Error: {ex.Message}");
             Console.WriteLine($"[FaceIT] ❌ JSON Content: {json}");
         }
         catch (Exception ex)
         {
-            player.PrintToChat(" [FaceIT] ❌ Eroare neasteptata");
+            player.PrintToChat(" [FaceIT] ❌ Unexpected error");
             Console.WriteLine($"[FaceIT] ❌ Parse Unexpected Error: {ex.Message}");
         }
     }
 
-    // ================== COMENZI MANUALE ==================
+    // ================== MANUAL COMMANDS ==================
     [CommandHelper(minArgs: 1, usage: "[level 1-10]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
     public void OnSetLevelCommand(CCSPlayerController? player, CommandInfo command)
     {
@@ -468,14 +468,14 @@ public class FaceITBalancer : BasePlugin
         string levelStr = command.GetArg(1);
         if (!int.TryParse(levelStr, out int level) || level < 1 || level > 10)
         {
-            player.PrintToChat(" [FaceIT] ❌ Level trebuie sa fie intre 1-10");
-            player.PrintToChat(" [FaceIT] 💡 Foloseste: !setlevel [1-10]");
+            player.PrintToChat(" [FaceIT] ❌ Level must be between 1-10");
+            player.PrintToChat(" [FaceIT] 💡 Use: !setlevel [1-10]");
             return;
         }
 
         int elo = LevelToELO(level);
         SetManualData(player, level, elo);
-        player.PrintToChat($" [FaceIT] ✅ Level setat: {level} (ELO: {elo})");
+        player.PrintToChat($" [FaceIT] ✅ Level set: {level} (ELO: {elo})");
         Console.WriteLine($"[FaceIT] ✅ Manual data set for {player.PlayerName}: Level {level}, ELO {elo}");
     }
 
@@ -487,14 +487,14 @@ public class FaceITBalancer : BasePlugin
         string eloStr = command.GetArg(1);
         if (!int.TryParse(eloStr, out int elo) || elo < 1 || elo > 3900)
         {
-            player.PrintToChat(" [FaceIT] ❌ ELO trebuie sa fie intre 1-3900");
-            player.PrintToChat(" [FaceIT] 💡 Foloseste: !setelo [ELO]");
+            player.PrintToChat(" [FaceIT] ❌ ELO must be between 1-3900");
+            player.PrintToChat(" [FaceIT] 💡 Use: !setelo [ELO]");
             return;
         }
 
         int level = ELOToLevel(elo);
         SetManualData(player, level, elo);
-        player.PrintToChat($" [FaceIT] ✅ ELO setat: {elo} (Level: {level})");
+        player.PrintToChat($" [FaceIT] ✅ ELO set: {elo} (Level: {level})");
         Console.WriteLine($"[FaceIT] ✅ Manual data set for {player.PlayerName}: Level {level}, ELO {elo}");
     }
 
@@ -510,27 +510,27 @@ public class FaceITBalancer : BasePlugin
         }
         else
         {
-            player.PrintToChat(" [FaceIT] 💡 Foloseste !getfaceit sau !setlevel [1-10]");
-            player.PrintToChat(" [FaceIT] 💡 Vezi toate comenzile cu !faceit_help");
+            player.PrintToChat(" [FaceIT] 💡 Use !getfaceit or !setlevel [1-10]");
+            player.PrintToChat(" [FaceIT] 💡 See all commands with !faceit_help");
         }
     }
 
-    // ================== COMENZI ADMIN ==================
+    // ================== ADMIN COMMANDS ==================
     [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
     public void OnPlayersDataCommand(CCSPlayerController? player, CommandInfo command)
     {
         if (player == null || !player.IsValid) 
         {
-            // Executat din consolă server
+            // Executed from server console
             ShowPlayersDataInConsole();
             return;
         }
 
-        // Executat de jucător - verifică permisiuni admin
+        // Executed by player - check admin permissions
         if (!HasAdminPermissions(player))
         {
-            player.PrintToChat(" [FaceIT] ❌ Nu ai permisiune pentru aceasta comanda!");
-            player.PrintToChat(" [FaceIT] 💡 Vezi comenzile disponibile cu !faceit_help");
+            player.PrintToChat(" [FaceIT] ❌ You don't have permission for this command!");
+            player.PrintToChat(" [FaceIT] 💡 See available commands with !faceit_help");
             return;
         }
 
@@ -554,33 +554,33 @@ public class FaceITBalancer : BasePlugin
         
         if (playersWithData.Count == 0)
         {
-            adminPlayer.PrintToChat(" [FaceIT] 📊 Niciun jucator cu date incarcate");
-            adminPlayer.PrintToChat(" [FaceIT] 💡 Foloseste !getfaceit_all pentru a incarca date");
+            adminPlayer.PrintToChat(" [FaceIT] 📊 No players with loaded data");
+            adminPlayer.PrintToChat(" [FaceIT] 💡 Use !getfaceit_all to load data");
             return;
         }
 
-        adminPlayer.PrintToChat(" [FaceIT] 📊 Jucatori cu date incarcate:");
+        adminPlayer.PrintToChat(" [FaceIT] 📊 Players with loaded data:");
         adminPlayer.PrintToChat(" [FaceIT] ===============================");
         
-        // Sorteaza dupa ELO (descrescator)
+        // Sort by ELO (descending)
         var sortedPlayers = playersWithData.OrderByDescending(p => p.Value.ELO).ToList();
         
-        foreach (var (steamId, data) in sortedPlayers.Take(10)) // Limita la primele 10 pentru chat
+        foreach (var (steamId, data) in sortedPlayers.Take(10)) // Limit to first 10 for chat
         {
             adminPlayer.PrintToChat($" [FaceIT] 👤 {data.Nickname} | ELO: {data.ELO} | Level: {data.Level}");
         }
         
         if (sortedPlayers.Count > 10)
         {
-            adminPlayer.PrintToChat($" [FaceIT] 📈 ... si inca {sortedPlayers.Count - 10} jucatori");
+            adminPlayer.PrintToChat($" [FaceIT] 📈 ... and {sortedPlayers.Count - 10} more players");
         }
         
         int totalELO = sortedPlayers.Sum(p => p.Value.ELO);
         int averageELO = sortedPlayers.Count > 0 ? totalELO / sortedPlayers.Count : 0;
         
-        adminPlayer.PrintToChat($" [FaceIT] 📈 Total: {sortedPlayers.Count} jucatori | ELO Mediu: {averageELO}");
+        adminPlayer.PrintToChat($" [FaceIT] 📈 Total: {sortedPlayers.Count} players | Average ELO: {averageELO}");
         
-        // Afișează și în consolă pentru detalii complete
+        // Also show in console for complete details
         Console.WriteLine($"[FaceIT] 📊 Players with data: {sortedPlayers.Count}");
         foreach (var (steamId, data) in sortedPlayers)
         {
@@ -595,13 +595,13 @@ public class FaceITBalancer : BasePlugin
 
         if (!HasAdminPermissions(player))
         {
-            player.PrintToChat(" [FaceIT] ❌ Nu ai permisiune!");
-            player.PrintToChat(" [FaceIT] 💡 Vezi comenzile disponibile cu !faceit_help");
+            player.PrintToChat(" [FaceIT] ❌ You don't have permission!");
+            player.PrintToChat(" [FaceIT] 💡 See available commands with !faceit_help");
             return;
         }
 
         BalanceTeamsByELO();
-        Server.PrintToChatAll(" [FaceIT] ✅ Echipe echilibrate de admin!");
+        Server.PrintToChatAll(" [FaceIT] ✅ Teams balanced by admin!");
     }
 
     [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
@@ -611,16 +611,16 @@ public class FaceITBalancer : BasePlugin
 
         if (!HasAdminPermissions(player))
         {
-            player.PrintToChat(" [FaceIT] ❌ Nu ai permisiune!");
-            player.PrintToChat(" [FaceIT] 💡 Vezi comenzile disponibile cu !faceit_help");
+            player.PrintToChat(" [FaceIT] ❌ You don't have permission!");
+            player.PrintToChat(" [FaceIT] 💡 See available commands with !faceit_help");
             return;
         }
 
         Balance5v5TeamsByELO();
-        Server.PrintToChatAll(" [FaceIT] ✅ 5v5 echilibrat de admin!");
+        Server.PrintToChatAll(" [FaceIT] ✅ 5v5 balanced by admin!");
     }
 
-    // ================== FUNCTII ECHILIBRARE ==================
+    // ================== BALANCING FUNCTIONS ==================
     private void BalanceTeamsByELO()
     {
         var players = Utilities.GetPlayers()
@@ -632,13 +632,13 @@ public class FaceITBalancer : BasePlugin
 
         if (players.Count < 2)
         {
-            Server.PrintToChatAll(" [FaceIT] ❌ Nu sunt suficienti jucatori cu date");
-            Server.PrintToChatAll(" [FaceIT] 💡 Folositi !getfaceit sau !setlevel [1-10]");
-            Server.PrintToChatAll(" [FaceIT] 💡 Adminii pot folosi !getfaceit_all pentru toti jucatorii");
+            Server.PrintToChatAll(" [FaceIT] ❌ Not enough players with data");
+            Server.PrintToChatAll(" [FaceIT] 💡 Use !getfaceit or !setlevel [1-10]");
+            Server.PrintToChatAll(" [FaceIT] 💡 Admins can use !getfaceit_all for all players");
             return;
         }
 
-        // Sorteaza dupa ELO (descrescator) - ECHILIBRARE DUPA ELO
+        // Sort by ELO (descending) - BALANCING BY ELO
         players.Sort((a, b) => _playerData[b.SteamID].ELO.CompareTo(_playerData[a.SteamID].ELO));
 
         int team1Total = 0, team2Total = 0;
@@ -650,7 +650,7 @@ public class FaceITBalancer : BasePlugin
             
             if (team1Total <= team2Total && team1Count < (players.Count + 1) / 2)
             {
-                // Schimba in Terrorist (echipa 2)
+                // Switch to Terrorist (team 2)
                 player.TeamNum = 2;
                 team1Total += playerData.ELO;
                 team1Count++;
@@ -658,7 +658,7 @@ public class FaceITBalancer : BasePlugin
             }
             else
             {
-                // Schimba in Counter-Terrorist (echipa 3)
+                // Switch to Counter-Terrorist (team 3)
                 player.TeamNum = 3;
                 team2Total += playerData.ELO;
                 team2Count++;
@@ -666,10 +666,10 @@ public class FaceITBalancer : BasePlugin
             }
         }
 
-        Server.PrintToChatAll($" [FaceIT] ✅ Echipe echilibrate dupa ELO!");
-        Server.PrintToChatAll($" [FACEIT] █ T: {team1Total} ELO ({team1Count}j) | █ CT: {team2Total} ELO ({team2Count}j)");
+        Server.PrintToChatAll($" [FaceIT] ✅ Teams balanced by ELO!");
+        Server.PrintToChatAll($" [FACEIT] █ T: {team1Total} ELO ({team1Count}p) | █ CT: {team2Total} ELO ({team2Count}p)");
         
-        Console.WriteLine($"[FaceIT] ✅ Balance complete: T={team1Total} ({team1Count}j) vs CT={team2Total} ({team2Count}j)");
+        Console.WriteLine($"[FaceIT] ✅ Balance complete: T={team1Total} ({team1Count}p) vs CT={team2Total} ({team2Count}p)");
     }
 
     private void Balance5v5TeamsByELO()
@@ -683,12 +683,12 @@ public class FaceITBalancer : BasePlugin
 
         if (players.Count < 10)
         {
-            Server.PrintToChatAll($" [FaceIT] ❌ {players.Count}/10 jucatori cu date");
-            Server.PrintToChatAll(" [FaceIT] 💡 Folositi !getfaceit sau !setlevel [1-10]");
+            Server.PrintToChatAll($" [FaceIT] ❌ {players.Count}/10 players with data");
+            Server.PrintToChatAll(" [FaceIT] 💡 Use !getfaceit or !setlevel [1-10]");
             return;
         }
 
-        // Sorteaza dupa ELO (descrescator) si ia primii 10 - ECHILIBRARE DUPA ELO
+        // Sort by ELO (descending) and take first 10 - BALANCING BY ELO
         players.Sort((a, b) => _playerData[b.SteamID].ELO.CompareTo(_playerData[a.SteamID].ELO));
         if (players.Count > 10) 
             players = players.Take(10).ToList();
@@ -715,19 +715,19 @@ public class FaceITBalancer : BasePlugin
             }
         }
 
-        // Aplica echipele
+        // Apply teams
         foreach (var player in team1) 
             player.TeamNum = 2; // Terrorist
         foreach (var player in team2) 
             player.TeamNum = 3; // Counter-Terrorist
 
-        Server.PrintToChatAll(" [FaceIT] ✅ 5v5 BALANCED dupa ELO!");
+        Server.PrintToChatAll(" [FaceIT] ✅ 5v5 BALANCED by ELO!");
         Server.PrintToChatAll($" [FACEIT] █ T: {team1Total} ELO | █ CT: {team2Total} ELO");
         
         Console.WriteLine($"[FaceIT] ✅ 5v5 Balance complete: T={team1Total} vs CT={team2Total}");
     }
 
-    // ================== FUNCTII UTILITARE ==================
+    // ================== UTILITY FUNCTIONS ==================
     private void SetManualData(CCSPlayerController player, int level, int elo)
     {
         _playerData[player.SteamID] = new PlayerData
@@ -769,6 +769,6 @@ public class FaceITBalancer : BasePlugin
     public override void Unload(bool hotReload)
     {
         _httpClient?.Dispose();
-        Console.WriteLine("[FaceIT] Plugin descarcat");
+        Console.WriteLine("[FaceIT] Plugin unloaded");
     }
 }
