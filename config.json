@@ -1,0 +1,7 @@
+{
+  "FaceITBalancer": {
+    "ApiKey": "API_KEY_AICI",
+    "AutoBalance": false,
+    "MinPlayers": 10
+  }
+}
