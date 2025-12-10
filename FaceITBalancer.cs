@@ -1,14 +1,12 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes;
-using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
-using CounterStrikeSharp.API.Modules.Entities;
+using CounterStrikeSharp.API.Modules.Timers;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Net.Http;
-using System.Threading.Tasks;
 using System.IO;
 using System;
 
@@ -18,14 +16,22 @@ namespace FaceITBalancer;
 public class FaceITBalancer : BasePlugin
 {
     public override string ModuleName => "FaceIT Team Balancer";
-    public override string ModuleVersion => "0.1.4-Beta";
+    public override string ModuleVersion => "0.6.1";
     public override string ModuleAuthor => "Larry Lacurte.ro";
-    public override string ModuleDescription => "Balances teams based on FaceIT ELO ratings";
+    public override string ModuleDescription => "FaceIT ELO fetcher with smart match detection";
 
     private Dictionary<ulong, PlayerData> _playerData = new();
     private HttpClient _httpClient = new();
     private string _apiKey = "";
     private bool _apiEnabled = false;
+    private Queue<ulong> _playersToFetch = new Queue<ulong>();
+    private bool _isFetching = false;
+    private int _fetchCounter = 0;
+    
+    // Starea plugin-ului
+    private bool _pluginEnabled = true;
+    private bool _matchInProgress = false;
+    private DateTime _lastStatusCheck = DateTime.MinValue;
 
     private class PlayerData
     {
@@ -33,14 +39,18 @@ public class FaceITBalancer : BasePlugin
         public int ELO { get; set; } = 500;
         public string Nickname { get; set; } = "Unknown";
         public bool DataLoaded { get; set; } = false;
+        public DateTime LastFetchAttempt { get; set; } = DateTime.MinValue;
     }
 
     private class PluginConfig
     {
         public string ApiKey { get; set; } = "";
-        public bool AutoBalance { get; set; } = false;
-        public int MinPlayers { get; set; } = 10;
+        public bool AutoFetchOnConnect { get; set; } = true;
+        public int AutoFetchDelay { get; set; } = 5;
+        public bool DisableDuringMatch { get; set; } = true;
     }
+
+    private PluginConfig? config;
 
     public override void Load(bool hotReload)
     {
@@ -49,15 +59,20 @@ public class FaceITBalancer : BasePlugin
         
         LoadConfig();
         RegisterCommands();
+        RegisterEventHandlers();
         
         if (_apiEnabled)
         {
-            Console.WriteLine("[FaceIT] ✅ Plugin loaded with API support!");
+            Console.WriteLine("[FaceIT] Plugin loaded with API support!");
+            if (config != null)
+            {
+                Console.WriteLine($"[FaceIT] Auto-disable during match: {(config.DisableDuringMatch ? "YES" : "NO")}");
+            }
         }
         else
         {
-            Console.WriteLine("[FaceIT] ✅ Plugin loaded (manual mode)");
-            Console.WriteLine("[FaceIT] 💡 Players can use !setlevel [1-10] or !setelo [ELO]");
+            Console.WriteLine("[FaceIT] Plugin loaded in manual mode");
+            Console.WriteLine("[FaceIT] Configure API key in config.json");
         }
     }
 
@@ -67,7 +82,7 @@ public class FaceITBalancer : BasePlugin
         
         if (!File.Exists(configPath))
         {
-            Console.WriteLine("[FaceIT] ❌ config.json does not exist!");
+            Console.WriteLine("[FaceIT] config.json does not exist!");
             CreateDefaultConfig(configPath);
             return;
         }
@@ -75,14 +90,13 @@ public class FaceITBalancer : BasePlugin
         try
         {
             var json = File.ReadAllText(configPath);
-            var config = JsonSerializer.Deserialize<PluginConfig>(json);
+            config = JsonSerializer.Deserialize<PluginConfig>(json);
             
             if (config != null && !string.IsNullOrEmpty(config.ApiKey) && config.ApiKey != "API_KEY_HERE")
             {
                 _apiKey = config.ApiKey;
                 _apiEnabled = true;
                 
-                // Add correct Authorization header for FaceIT API
                 if (!_apiKey.StartsWith("Bearer "))
                 {
                     _apiKey = "Bearer " + _apiKey;
@@ -90,17 +104,17 @@ public class FaceITBalancer : BasePlugin
                 
                 _httpClient.DefaultRequestHeaders.Clear();
                 _httpClient.DefaultRequestHeaders.Add("Authorization", _apiKey);
-                Console.WriteLine($"[FaceIT] ✅ API Key configured: {_apiKey.Substring(0, Math.Min(15, _apiKey.Length))}...");
+                Console.WriteLine($"[FaceIT] API Key configured");
             }
             else
             {
-                Console.WriteLine("[FaceIT] ℹ️  API Key not configured - using manual mode");
+                Console.WriteLine("[FaceIT] API Key not configured - plugin disabled");
                 _apiEnabled = false;
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FaceIT] ❌ Error loading config.json: {ex.Message}");
+            Console.WriteLine($"[FaceIT] Error loading config.json: {ex.Message}");
             _apiEnabled = false;
         }
     }
@@ -110,283 +124,282 @@ public class FaceITBalancer : BasePlugin
         var defaultConfig = new PluginConfig
         {
             ApiKey = "API_KEY_HERE",
-            AutoBalance = false,
-            MinPlayers = 10
+            AutoFetchOnConnect = true,
+            AutoFetchDelay = 5,
+            DisableDuringMatch = true
         };
 
         var options = new JsonSerializerOptions { WriteIndented = true };
         var json = JsonSerializer.Serialize(defaultConfig, options);
         File.WriteAllText(configPath, json);
         
-        Console.WriteLine($"[FaceIT] 📁 Config created: {configPath}");
-        Console.WriteLine("[FaceIT] ⚠️  Configure API Key in config file!");
+        Console.WriteLine($"[FaceIT] Config created: {configPath}");
+        Console.WriteLine("[FaceIT] Configure API Key in config file!");
     }
 
-    private void RegisterCommands()
+    private void RegisterEventHandlers()
     {
-        // Help and info commands
-        AddCommand("css_faceit", "FaceIT commands help", OnFaceITHelpCommand);
-        AddCommand("css_faceit_help", "FaceIT commands help", OnFaceITHelpCommand);
+        // Timer pentru verificarea starii meciului (la fiecare 10 secunde)
+        AddTimer(10.0f, CheckMatchStatus, TimerFlags.REPEAT);
         
-        // Admin commands
-        AddCommand("css_fbalance", "Balance teams", OnBalanceCommand);
-        AddCommand("css_fbalance5v5", "Balance 5v5", OnBalance5v5Command);
-        AddCommand("css_getfaceit_all", "Load FaceIT data for all players", OnGetFaceITAllCommand);
+        // Timer simplu pentru a detecta playeri noi - doar daca plugin-ul este activ
+        AddTimer(5.0f, CheckForNewPlayers, TimerFlags.REPEAT);
         
-        // Player commands
-        AddCommand("css_getfaceit", "Load FaceIT data", OnGetFaceITCommand);
-        AddCommand("css_setlevel", "Set level manually", OnSetLevelCommand);
-        AddCommand("css_setelo", "Set ELO manually", OnSetELOCommand);
-        AddCommand("css_myfaceit", "View your data", OnMyFaceITCommand);
-        
-        // Admin data viewing commands
-        AddCommand("css_playersdata", "View all players data", OnPlayersDataCommand);
+        // Timer pentru procesarea cozii de fetch (o dat? pe secund?) - doar daca plugin-ul este activ
+        AddTimer(1.0f, ProcessFetchQueue, TimerFlags.REPEAT);
     }
 
-    // ================== HELP COMMAND ==================
-    [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-    public void OnFaceITHelpCommand(CCSPlayerController? player, CommandInfo command)
+    private void CheckMatchStatus()
     {
-        if (player == null || !player.IsValid) 
-        {
-            ShowHelpInConsole();
+        if (!_apiEnabled || config?.DisableDuringMatch != true) 
             return;
-        }
 
-        ShowHelpInChat(player);
-    }
-
-    private void ShowHelpInConsole()
-    {
-        Console.WriteLine("[FaceIT] 📖 AVAILABLE COMMANDS:");
-        Console.WriteLine("[FaceIT] =========================");
-        Console.WriteLine("[FaceIT] 🔹 !faceit / !faceit_help - Show this help");
-        Console.WriteLine("[FaceIT] ");
-        Console.WriteLine("[FaceIT] 👤 PLAYER COMMANDS:");
-        Console.WriteLine("[FaceIT] 🔹 !getfaceit - Load your data from FaceIT");
-        Console.WriteLine("[FaceIT] 🔹 !setlevel [1-10] - Set level manually");
-        Console.WriteLine("[FaceIT] 🔹 !setelo [ELO] - Set ELO manually (1-3900)");
-        Console.WriteLine("[FaceIT] 🔹 !myfaceit - View your loaded data");
-        Console.WriteLine("[FaceIT] ");
-        Console.WriteLine("[FaceIT] ⚡ ADMIN COMMANDS:");
-        Console.WriteLine("[FaceIT] 🔹 !getfaceit_all - Load data for all players");
-        Console.WriteLine("[FaceIT] 🔹 !playersdata - View all players data");
-        Console.WriteLine("[FaceIT] 🔹 !fbalance - Balance teams by ELO");
-        Console.WriteLine("[FaceIT] 🔹 !fbalance5v5 - Balance 5v5 by ELO");
-        Console.WriteLine("[FaceIT] ");
-        Console.WriteLine("[FaceIT] 💡 Note: Balancing is done by ELO, not by level!");
-    }
-
-    private void ShowHelpInChat(CCSPlayerController player)
-    {
-        player.PrintToChat(" [FaceIT] 📖 AVAILABLE COMMANDS:");
-        player.PrintToChat(" [FaceIT] =========================");
-        player.PrintToChat(" [FaceIT] 🔹 !faceit / !faceit_help - This help");
-        player.PrintToChat(" [FaceIT] ");
-        player.PrintToChat(" [FaceIT] 👤 PLAYER COMMANDS:");
-        player.PrintToChat(" [FaceIT] 🔹 !getfaceit - Your FaceIT data");
-        player.PrintToChat(" [FaceIT] 🔹 !setlevel [1-10] - Manual level");
-        player.PrintToChat(" [FaceIT] 🔹 !setelo [ELO] - Manual ELO (1-3900)");
-        player.PrintToChat(" [FaceIT] 🔹 !myfaceit - View your data");
-        
-        if (HasAdminPermissions(player))
-        {
-            player.PrintToChat(" [FaceIT] ");
-            player.PrintToChat(" [FaceIT] ⚡ ADMIN COMMANDS:");
-            player.PrintToChat(" [FaceIT] 🔹 !getfaceit_all - Data for all players");
-            player.PrintToChat(" [FaceIT] 🔹 !playersdata - All players data");
-            player.PrintToChat(" [FaceIT] 🔹 !fbalance - Balance teams");
-            player.PrintToChat(" [FaceIT] 🔹 !fbalance5v5 - Balance 5v5");
-        }
-        
-        player.PrintToChat(" [FaceIT] ");
-        player.PrintToChat(" [FaceIT] 💡 Balancing is done by ELO!");
-    }
-
-    // ================== API COMMANDS ==================
-    [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-    public void OnGetFaceITCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        if (player == null || !player.IsValid) 
-        {
-            Console.WriteLine("[FaceIT] ❌ Player is null or invalid");
-            return;
-        }
-
-        var steamID = player.SteamID;
-        Console.WriteLine($"[FaceIT] 🔍 GetFaceIT command from: {player.PlayerName}, SteamID: {steamID}");
-
-        if (steamID == 0)
-        {
-            player.PrintToChat(" [FaceIT] ❌ Cannot get SteamID");
-            Console.WriteLine($"[FaceIT] ❌ Invalid SteamID: {steamID}");
-            return;
-        }
-
-        if (!_apiEnabled)
-        {
-            player.PrintToChat(" [FaceIT] ❌ API is not configured");
-            player.PrintToChat(" [FaceIT] 💡 Use !setlevel for manual setup");
-            return;
-        }
-
-        player.PrintToChat(" [FaceIT] 🔍 Searching for your data...");
-        _ = FetchFaceITData(player, steamID.ToString());
-    }
-
-    [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-    public void OnGetFaceITAllCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        if (player == null || !player.IsValid) return;
-
-        if (!HasAdminPermissions(player))
-        {
-            player.PrintToChat(" [FaceIT] ❌ You don't have permission for this command!");
-            return;
-        }
-
-        if (!_apiEnabled)
-        {
-            player.PrintToChat(" [FaceIT] ❌ API is not configured");
-            return;
-        }
-
-        var players = Utilities.GetPlayers()
-            .Where(p => p != null && p.IsValid && p.IsBot == false)
-            .ToList();
-
-        if (players.Count == 0)
-        {
-            player.PrintToChat(" [FaceIT] ❌ No players on server");
-            return;
-        }
-
-        player.PrintToChat($" [FaceIT] 🔍 Loading data for {players.Count} players...");
-        Server.PrintToChatAll($" [FaceIT] 🔍 Admin is loading FaceIT data for all players...");
-
-        _ = FetchFaceITDataForAllPlayers(players, player);
-    }
-
-    private async Task FetchFaceITDataForAllPlayers(List<CCSPlayerController> players, CCSPlayerController adminPlayer)
-    {
-        int successCount = 0;
-        int errorCount = 0;
-
-        foreach (var player in players)
-        {
-            if (player.IsValid && !player.IsBot)
-            {
-                try
-                {
-                    var steamID = player.SteamID;
-                    if (steamID != 0)
-                    {
-                        var url = $"https://open.faceit.com/data/v4/players?game=cs2&game_player_id={steamID}";
-                        var response = await _httpClient.GetAsync(url);
-                        
-                        if (response.IsSuccessStatusCode)
-                        {
-                            var json = await response.Content.ReadAsStringAsync();
-                            ParseFaceITResponse(player, json);
-                            successCount++;
-                            
-                            // Small delay between requests to avoid rate limiting
-                            await Task.Delay(500);
-                        }
-                        else
-                        {
-                            errorCount++;
-                            Console.WriteLine($"[FaceIT] ❌ Error for {player.PlayerName}: {response.StatusCode}");
-                        }
-                    }
-                    else
-                    {
-                        errorCount++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    errorCount++;
-                    Console.WriteLine($"[FaceIT] ❌ Exception for {player.PlayerName}: {ex.Message}");
-                }
-            }
-        }
-
-        adminPlayer.PrintToChat($" [FaceIT] ✅ Data loaded for {successCount} players");
-        if (errorCount > 0)
-        {
-            adminPlayer.PrintToChat($" [FaceIT] ⚠️  Errors for {errorCount} players");
-        }
-        
-        Console.WriteLine($"[FaceIT] ✅ Bulk data load complete: {successCount} success, {errorCount} errors");
-    }
-
-    private async Task FetchFaceITData(CCSPlayerController player, string steamID)
-    {
         try
         {
-            var url = $"https://open.faceit.com/data/v4/players?game=cs2&game_player_id={steamID}";
-            Console.WriteLine($"[FaceIT] 🔍 Fetching data for SteamID: {steamID}");
-            Console.WriteLine($"[FaceIT] 🔗 URL: {url}");
+            // Verifica doar o data la 10 secunde (performanta maxima)
+            if ((DateTime.Now - _lastStatusCheck).TotalSeconds < 10)
+                return;
+                
+            _lastStatusCheck = DateTime.Now;
             
-            var response = await _httpClient.GetAsync(url);
-            var responseContent = await response.Content.ReadAsStringAsync();
+            bool wasInProgress = _matchInProgress;
             
-            Console.WriteLine($"[FaceIT] 📡 Response Status: {response.StatusCode}");
-            Console.WriteLine($"[FaceIT] 📄 Response Content: {responseContent}");
-
-            if (response.IsSuccessStatusCode)
+            // Detectare inteligenta a meciului:
+            // 1. Numara jucatorii pe fiecare echipa
+            var terrorists = Utilities.GetPlayers()
+                .Where(p => p != null && p.IsValid && !p.IsBot && p.TeamNum == 2)
+                .Count();
+                
+            var cts = Utilities.GetPlayers()
+                .Where(p => p != null && p.IsValid && !p.IsBot && p.TeamNum == 3)
+                .Count();
+            
+            // 2. Verifica daca sunt suficiente jucatori pentru un meci (minim 1v1, dar pentru siguranta 2v2)
+            // 3. Verifica daca jucatorii nu sunt doar în warmup (nu sunt toti în spectate/necunoscuti)
+            var totalPlayers = terrorists + cts;
+            var unassigned = Utilities.GetPlayers()
+                .Where(p => p != null && p.IsValid && !p.IsBot && p.TeamNum != 2 && p.TeamNum != 3)
+                .Count();
+            
+            // Logica: Daca sunt cel putin 4 jucatori pe echipe si putini neasignati, probabil meci
+            _matchInProgress = (totalPlayers >= 4 && unassigned <= 2);
+            
+            // Update plugin enabled status
+            _pluginEnabled = !_matchInProgress;
+            
+            if (wasInProgress != _matchInProgress)
             {
-                ParseFaceITResponse(player, responseContent);
+                Console.WriteLine($"[FaceIT] Match status changed: {(_matchInProgress ? "IN PROGRESS" : "WARMUP/STOPPED")}");
+                Console.WriteLine($"[FaceIT] Plugin is now: {(_pluginEnabled ? "ENABLED" : "DISABLED (match in progress)")}");
+                Console.WriteLine($"[FaceIT] Players: T={terrorists}, CT={cts}, Unassigned={unassigned}");
+                
+                if (_matchInProgress)
+                {
+                    // Curata coada de fetch când meciul începe
+                    _playersToFetch.Clear();
+                    _isFetching = false;
+                    Console.WriteLine("[FaceIT] Cleared fetch queue because match started");
+                    
+                    // Anunta pe chat
+                    Server.PrintToChatAll(" [FaceIT] FaceIT balancer disabled - match is live!");
+                }
+                else
+                {
+                    Server.PrintToChatAll(" [FaceIT] FaceIT balancer enabled for warmup!");
+                }
             }
-            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-            {
-                player.PrintToChat(" [FaceIT] ❌ Authentication error (Invalid API Key)");
-                Console.WriteLine($"[FaceIT] ❌ API Key invalid or expired");
-            }
-            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                player.PrintToChat(" [FaceIT] ❌ Player not found on FaceIT");
-                Console.WriteLine($"[FaceIT] ❌ Player not found on FaceIT");
-            }
-            else if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            {
-                player.PrintToChat(" [FaceIT] ❌ Too many requests. Please wait.");
-                Console.WriteLine($"[FaceIT] ❌ Rate limit exceeded");
-            }
-            else
-            {
-                player.PrintToChat(" [FaceIT] ❌ Error getting data");
-                Console.WriteLine($"[FaceIT] ❌ API Error: {response.StatusCode}");
-            }
-        }
-        catch (HttpRequestException ex)
-        {
-            player.PrintToChat(" [FaceIT] ❌ Network error");
-            Console.WriteLine($"[FaceIT] ❌ Network Error: {ex.Message}");
-        }
-        catch (TaskCanceledException)
-        {
-            player.PrintToChat(" [FaceIT] ❌ Timeout connecting to FaceIT");
-            Console.WriteLine($"[FaceIT] ❌ Request timeout");
         }
         catch (Exception ex)
         {
-            player.PrintToChat(" [FaceIT] ❌ Unexpected error");
-            Console.WriteLine($"[FaceIT] ❌ Unexpected Error: {ex.Message}");
+            Console.WriteLine($"[FaceIT] Error checking match status: {ex.Message}");
         }
     }
 
-    private void ParseFaceITResponse(CCSPlayerController player, string json)
+    private void CheckForNewPlayers()
     {
+        if (!_apiEnabled || !_pluginEnabled) return;
+
         try
         {
-            Console.WriteLine($"[FaceIT] 🔍 Parsing JSON response...");
+            var players = Utilities.GetPlayers()
+                .Where(p => p != null && p.IsValid && !p.IsBot && p.SteamID != 0)
+                .ToList();
+
+            foreach (var player in players)
+            {
+                var steamID = player.SteamID;
+                
+                // Verifica daca player-ul nu are date înca si nu este deja în coada
+                if (!_playerData.ContainsKey(steamID))
+                {
+                    // Adauga în dictionar
+                    _playerData[steamID] = new PlayerData
+                    {
+                        Nickname = player.PlayerName ?? "Unknown",
+                        LastFetchAttempt = DateTime.MinValue
+                    };
+
+                    // Adauga în coada pentru fetch
+                    if (!_playersToFetch.Contains(steamID))
+                    {
+                        _playersToFetch.Enqueue(steamID);
+                        Console.WriteLine($"[FaceIT] Added player {player.PlayerName} to fetch queue");
+                    }
+                }
+                else if (!_playerData[steamID].DataLoaded && 
+                         (DateTime.Now - _playerData[steamID].LastFetchAttempt).TotalMinutes > 5 &&
+                         !_playersToFetch.Contains(steamID))
+                {
+                    // Reîncearca daca nu are date si ultima încercare a fost acum mai mult de 5 minute
+                    _playersToFetch.Enqueue(steamID);
+                    Console.WriteLine($"[FaceIT] Re-added player {player.PlayerName} to fetch queue");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FaceIT] Error in CheckForNewPlayers: {ex.Message}");
+        }
+    }
+
+    private void ProcessFetchQueue()
+    {
+        if (!_apiEnabled || !_pluginEnabled || _isFetching || _playersToFetch.Count == 0) 
+            return;
+
+        _fetchCounter++;
+        
+        // Proceseaza doar 1 player la fiecare 10 frame-uri pentru a nu încarca serverul
+        if (_fetchCounter % 10 != 0) 
+            return;
+
+        _isFetching = true;
+        
+        try
+        {
+            // Ia primul player din coada
+            var steamID = _playersToFetch.Dequeue();
             
+            // Gaseste player-ul
+            var player = Utilities.GetPlayers()
+                .FirstOrDefault(p => p != null && p.IsValid && !p.IsBot && p.SteamID == steamID);
+                
+            if (player == null)
+            {
+                _isFetching = false;
+                return;
+            }
+
+            Console.WriteLine($"[FaceIT] Starting fetch for {player.PlayerName} (SteamID: {steamID})");
+            
+            // Folosim BeginFetch care va continua pe urmatorul frame
+            BeginFetch(player, steamID);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FaceIT] Error in ProcessFetchQueue: {ex.Message}");
+            _isFetching = false;
+        }
+    }
+
+    private void BeginFetch(CCSPlayerController player, ulong steamID)
+    {
+        // Verifica daca avem deja date recente
+        if (_playerData.ContainsKey(steamID) && _playerData[steamID].DataLoaded)
+        {
+            Console.WriteLine($"[FaceIT] Player {player.PlayerName} already has data loaded");
+            _isFetching = false;
+            return;
+        }
+
+        // Verifica când a fost ultima încercare
+        if (_playerData.ContainsKey(steamID) && 
+            (DateTime.Now - _playerData[steamID].LastFetchAttempt).TotalMinutes < 1)
+        {
+            Console.WriteLine($"[FaceIT] Skipping fetch for {player.PlayerName}, recent attempt");
+            _isFetching = false;
+            return;
+        }
+
+        // Update last attempt time
+        if (_playerData.ContainsKey(steamID))
+        {
+            _playerData[steamID].LastFetchAttempt = DateTime.Now;
+        }
+
+        Console.WriteLine($"[FaceIT] Fetching FaceIT data for {player.PlayerName} (SteamID: {steamID})");
+        
+        // Folosim un timer pentru a face fetch-ul sincron la urmatorul frame
+        AddTimer(0.1f, () => {
+            ExecuteFetch(player, steamID);
+        });
+    }
+
+    private void ExecuteFetch(CCSPlayerController player, ulong steamID)
+    {
+        if (!player.IsValid || player.IsBot)
+        {
+            _isFetching = false;
+            return;
+        }
+
+        try
+        {
+            var url = $"https://open.faceit.com/data/v4/players?game=cs2&game_player_id={steamID}";
+            
+            // Folosim metoda sincron? GetAsync (f?r? await)
+            var task = _httpClient.GetAsync(url);
+            task.Wait(); // A?tept?m sincron
+            
+            var response = task.Result;
+            var responseContent = response.Content.ReadAsStringAsync().Result;
+            
+            Console.WriteLine($"[FaceIT] Response Status for {player.PlayerName}: {response.StatusCode}");
+
+            // Proceseaza raspunsul imediat
+            ProcessFaceITResponse(player, responseContent, response.IsSuccessStatusCode, response.StatusCode);
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.WriteLine($"[FaceIT] Network error for {player.PlayerName}: {ex.Message}");
+        }
+        catch (TaskCanceledException)
+        {
+            Console.WriteLine($"[FaceIT] Timeout for {player.PlayerName}");
+        }
+        catch (AggregateException aex)
+        {
+            foreach (var ex in aex.InnerExceptions)
+            {
+                Console.WriteLine($"[FaceIT] Fetch error for {player.PlayerName}: {ex.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FaceIT] Unexpected error for {player.PlayerName}: {ex.Message}");
+        }
+        finally
+        {
+            _isFetching = false;
+        }
+    }
+
+    private void ProcessFaceITResponse(CCSPlayerController player, string json, bool success, System.Net.HttpStatusCode statusCode)
+    {
+        if (!player.IsValid || player.IsBot) return;
+        
+        if (!success)
+        {
+            Console.WriteLine($"[FaceIT] Failed to get data for {player.PlayerName}: {statusCode}");
+            return;
+        }
+
+        try
+        {
             using JsonDocument doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            // Check if there are errors in response
+            // Verifica erori
             if (root.TryGetProperty("errors", out var errors))
             {
                 foreach (var error in errors.EnumerateArray())
@@ -394,19 +407,16 @@ public class FaceITBalancer : BasePlugin
                     if (error.TryGetProperty("message", out var message))
                     {
                         var errorMsg = message.GetString();
-                        Console.WriteLine($"[FaceIT] ❌ API Error: {errorMsg}");
-                        player.PrintToChat($" [FaceIT] ❌ {errorMsg}");
+                        Console.WriteLine($"[FaceIT] API Error for {player.PlayerName}: {errorMsg}");
                         return;
                     }
                 }
             }
 
-            // Extract nickname
             var nickname = root.TryGetProperty("nickname", out var nicknameElement) 
                 ? nicknameElement.GetString() ?? player.PlayerName 
                 : player.PlayerName;
 
-            // Extract CS2 data
             int skillLevel = 1;
             int faceitElo = 500;
             
@@ -423,204 +433,101 @@ public class FaceITBalancer : BasePlugin
                     faceitElo = eloElement.GetInt32();
                 }
                 
-                Console.WriteLine($"[FaceIT] ✅ CS2 data found: Level={skillLevel}, ELO={faceitElo}");
+                Console.WriteLine($"[FaceIT] CS2 data for {nickname}: Level={skillLevel}, ELO={faceitElo}");
             }
             else
             {
-                player.PrintToChat(" [FaceIT] ⚠️  No CS2 data found");
-                Console.WriteLine($"[FaceIT] ⚠️  No CS2 data found in response");
+                Console.WriteLine($"[FaceIT] No CS2 data found for {player.PlayerName}");
                 return;
             }
 
-            // Save data
             _playerData[player.SteamID] = new PlayerData
             {
                 Level = skillLevel,
                 ELO = faceitElo,
                 Nickname = nickname,
-                DataLoaded = true
+                DataLoaded = true,
+                LastFetchAttempt = DateTime.Now
             };
-
-            player.PrintToChat($" [FaceIT] ✅ Data loaded: {nickname}");
-            player.PrintToChat($" [FaceIT] 🎯 Level: {skillLevel} | ELO: {faceitElo}");
             
-            Console.WriteLine($"[FaceIT] ✅ Data loaded for {nickname}: Level {skillLevel}, ELO {faceitElo}");
+            Console.WriteLine($"[FaceIT] Data saved for {nickname}: Level {skillLevel}, ELO {faceitElo}");
+            
+            // Anunta jucatorul
+            player.PrintToChat($" [FaceIT] Your FaceIT data loaded: {nickname} | Level: {skillLevel} | ELO: {faceitElo}");
         }
         catch (JsonException ex)
         {
-            player.PrintToChat(" [FaceIT] ❌ Error parsing data");
-            Console.WriteLine($"[FaceIT] ❌ JSON Parse Error: {ex.Message}");
-            Console.WriteLine($"[FaceIT] ❌ JSON Content: {json}");
+            Console.WriteLine($"[FaceIT] JSON Parse Error for {player.PlayerName}: {ex.Message}");
         }
         catch (Exception ex)
         {
-            player.PrintToChat(" [FaceIT] ❌ Unexpected error");
-            Console.WriteLine($"[FaceIT] ❌ Parse Unexpected Error: {ex.Message}");
+            Console.WriteLine($"[FaceIT] Parse Error for {player.PlayerName}: {ex.Message}");
         }
     }
 
-    // ================== MANUAL COMMANDS ==================
-    [CommandHelper(minArgs: 1, usage: "[level 1-10]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-    public void OnSetLevelCommand(CCSPlayerController? player, CommandInfo command)
+    private void RegisterCommands()
     {
-        if (player == null || !player.IsValid) return;
-
-        string levelStr = command.GetArg(1);
-        if (!int.TryParse(levelStr, out int level) || level < 1 || level > 10)
-        {
-            player.PrintToChat(" [FaceIT] ❌ Level must be between 1-10");
-            player.PrintToChat(" [FaceIT] 💡 Use: !setlevel [1-10]");
-            return;
-        }
-
-        int elo = LevelToELO(level);
-        SetManualData(player, level, elo);
-        player.PrintToChat($" [FaceIT] ✅ Level set: {level} (ELO: {elo})");
-        Console.WriteLine($"[FaceIT] ✅ Manual data set for {player.PlayerName}: Level {level}, ELO {elo}");
-    }
-
-    [CommandHelper(minArgs: 1, usage: "[ELO]", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-    public void OnSetELOCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        if (player == null || !player.IsValid) return;
-
-        string eloStr = command.GetArg(1);
-        if (!int.TryParse(eloStr, out int elo) || elo < 1 || elo > 3900)
-        {
-            player.PrintToChat(" [FaceIT] ❌ ELO must be between 1-3900");
-            player.PrintToChat(" [FaceIT] 💡 Use: !setelo [ELO]");
-            return;
-        }
-
-        int level = ELOToLevel(elo);
-        SetManualData(player, level, elo);
-        player.PrintToChat($" [FaceIT] ✅ ELO set: {elo} (Level: {level})");
-        Console.WriteLine($"[FaceIT] ✅ Manual data set for {player.PlayerName}: Level {level}, ELO {elo}");
-    }
-
-    [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-    public void OnMyFaceITCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        if (player == null || !player.IsValid) return;
-
-        ulong steamId = player.SteamID;
-        if (_playerData.TryGetValue(steamId, out PlayerData? data) && data != null && data.DataLoaded)
-        {
-            player.PrintToChat($" [FaceIT] 🎯 {data.Nickname} | Level: {data.Level} | ELO: {data.ELO}");
-        }
-        else
-        {
-            player.PrintToChat(" [FaceIT] 💡 Use !getfaceit or !setlevel [1-10]");
-            player.PrintToChat(" [FaceIT] 💡 See all commands with !faceit_help");
-        }
-    }
-
-    // ================== ADMIN COMMANDS ==================
-    [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
-    public void OnPlayersDataCommand(CCSPlayerController? player, CommandInfo command)
-    {
-        if (player == null || !player.IsValid) 
-        {
-            // Executed from server console
-            ShowPlayersDataInConsole();
-            return;
-        }
-
-        // Executed by player - check admin permissions
-        if (!HasAdminPermissions(player))
-        {
-            player.PrintToChat(" [FaceIT] ❌ You don't have permission for this command!");
-            player.PrintToChat(" [FaceIT] 💡 See available commands with !faceit_help");
-            return;
-        }
-
-        ShowPlayersDataInChat(player);
-    }
-
-    private void ShowPlayersDataInConsole()
-    {
-        var playersWithData = _playerData.Where(p => p.Value.DataLoaded).ToList();
-        
-        Console.WriteLine($"[FaceIT] 📊 Players with data: {playersWithData.Count}");
-        foreach (var (steamId, data) in playersWithData)
-        {
-            Console.WriteLine($"[FaceIT] 👤 {data.Nickname} - Level: {data.Level}, ELO: {data.ELO}, SteamID: {steamId}");
-        }
-    }
-
-    private void ShowPlayersDataInChat(CCSPlayerController adminPlayer)
-    {
-        var playersWithData = _playerData.Where(p => p.Value.DataLoaded).ToList();
-        
-        if (playersWithData.Count == 0)
-        {
-            adminPlayer.PrintToChat(" [FaceIT] 📊 No players with loaded data");
-            adminPlayer.PrintToChat(" [FaceIT] 💡 Use !getfaceit_all to load data");
-            return;
-        }
-
-        adminPlayer.PrintToChat(" [FaceIT] 📊 Players with loaded data:");
-        adminPlayer.PrintToChat(" [FaceIT] ===============================");
-        
-        // Sort by ELO (descending)
-        var sortedPlayers = playersWithData.OrderByDescending(p => p.Value.ELO).ToList();
-        
-        foreach (var (steamId, data) in sortedPlayers.Take(10)) // Limit to first 10 for chat
-        {
-            adminPlayer.PrintToChat($" [FaceIT] 👤 {data.Nickname} | ELO: {data.ELO} | Level: {data.Level}");
-        }
-        
-        if (sortedPlayers.Count > 10)
-        {
-            adminPlayer.PrintToChat($" [FaceIT] 📈 ... and {sortedPlayers.Count - 10} more players");
-        }
-        
-        int totalELO = sortedPlayers.Sum(p => p.Value.ELO);
-        int averageELO = sortedPlayers.Count > 0 ? totalELO / sortedPlayers.Count : 0;
-        
-        adminPlayer.PrintToChat($" [FaceIT] 📈 Total: {sortedPlayers.Count} players | Average ELO: {averageELO}");
-        
-        // Also show in console for complete details
-        Console.WriteLine($"[FaceIT] 📊 Players with data: {sortedPlayers.Count}");
-        foreach (var (steamId, data) in sortedPlayers)
-        {
-            Console.WriteLine($"[FaceIT] 👤 {data.Nickname} - Level: {data.Level}, ELO: {data.ELO}, SteamID: {steamId}");
-        }
+        // Comenzi esen?iale
+        AddCommand("css_fbalance", "Balance teams by ELO", OnBalanceCommand);
+        AddCommand("css_fbalance5v5", "Balance 5v5 by ELO", OnBalance5v5Command);
+        AddCommand("css_elostatus", "Show ELO status of all players", OnELOStatusCommand);
+        AddCommand("css_fstatus", "Show FaceIT plugin status", OnFaceITStatusCommand);
     }
 
     [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
     public void OnBalanceCommand(CCSPlayerController? player, CommandInfo command)
     {
         if (player == null || !player.IsValid) return;
-
-        if (!HasAdminPermissions(player))
+        
+        if (!_pluginEnabled)
         {
-            player.PrintToChat(" [FaceIT] ❌ You don't have permission!");
-            player.PrintToChat(" [FaceIT] 💡 See available commands with !faceit_help");
+            player.PrintToChat(" [FaceIT] Plugin disabled - match is in progress!");
+            player.PrintToChat(" [FaceIT] Use during warmup only.");
             return;
         }
 
         BalanceTeamsByELO();
-        Server.PrintToChatAll(" [FaceIT] ✅ Teams balanced by admin!");
+        Server.PrintToChatAll(" [FaceIT] Teams balanced by ELO!");
     }
 
     [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
     public void OnBalance5v5Command(CCSPlayerController? player, CommandInfo command)
     {
         if (player == null || !player.IsValid) return;
-
-        if (!HasAdminPermissions(player))
+        
+        if (!_pluginEnabled)
         {
-            player.PrintToChat(" [FaceIT] ❌ You don't have permission!");
-            player.PrintToChat(" [FaceIT] 💡 See available commands with !faceit_help");
+            player.PrintToChat(" [FaceIT] Plugin disabled - match is in progress!");
+            player.PrintToChat(" [FaceIT] Use during warmup only.");
             return;
         }
 
         Balance5v5TeamsByELO();
-        Server.PrintToChatAll(" [FaceIT] ✅ 5v5 balanced by admin!");
+        Server.PrintToChatAll(" [FaceIT] 5v5 balanced by ELO!");
     }
 
-    // ================== BALANCING FUNCTIONS ==================
+    [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+    public void OnELOStatusCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (player == null || !player.IsValid) return;
+
+        ShowELOStatus(player);
+    }
+
+    [CommandHelper(minArgs: 0, usage: "", whoCanExecute: CommandUsage.CLIENT_AND_SERVER)]
+    public void OnFaceITStatusCommand(CCSPlayerController? player, CommandInfo command)
+    {
+        if (player == null || !player.IsValid) return;
+        
+        player.PrintToChat(" [FaceIT] ====== FACEIT PLUGIN STATUS ======");
+        player.PrintToChat($" [FaceIT] Plugin enabled: {(_pluginEnabled ? "YES" : "NO")}");
+        player.PrintToChat($" [FaceIT] Match in progress: {(_matchInProgress ? "YES" : "NO")}");
+        player.PrintToChat($" [FaceIT] Players with data: {_playerData.Count(p => p.Value.DataLoaded)}");
+        player.PrintToChat($" [FaceIT] Auto-fetch enabled: {(_apiEnabled ? "YES" : "NO")}");
+        player.PrintToChat(" [FaceIT] Commands: !fbalance, !fbalance5v5, !elostatus");
+        player.PrintToChat(" [FaceIT] ===================================");
+    }
+
     private void BalanceTeamsByELO()
     {
         var players = Utilities.GetPlayers()
@@ -628,48 +535,43 @@ public class FaceITBalancer : BasePlugin
             .Where(p => _playerData.ContainsKey(p.SteamID) && _playerData[p.SteamID].DataLoaded)
             .ToList();
 
-        Console.WriteLine($"[FaceIT] 🔍 Found {players.Count} players with data for balancing");
+        Console.WriteLine($"[FaceIT] Found {players.Count} players with data for balancing");
 
         if (players.Count < 2)
         {
-            Server.PrintToChatAll(" [FaceIT] ❌ Not enough players with data");
-            Server.PrintToChatAll(" [FaceIT] 💡 Use !getfaceit or !setlevel [1-10]");
-            Server.PrintToChatAll(" [FaceIT] 💡 Admins can use !getfaceit_all for all players");
+            Server.PrintToChatAll(" [FaceIT] Not enough players with FaceIT data");
+            Server.PrintToChatAll(" [FaceIT] Players need to connect and have FaceIT accounts");
             return;
         }
 
-        // Sort by ELO (descending) - BALANCING BY ELO
+        // Sorteaza dupa ELO (descrescator)
         players.Sort((a, b) => _playerData[b.SteamID].ELO.CompareTo(_playerData[a.SteamID].ELO));
 
         int team1Total = 0, team2Total = 0;
         int team1Count = 0, team2Count = 0;
 
-        foreach (var player in players)
+        foreach (var p in players)
         {
-            var playerData = _playerData[player.SteamID];
+            var data = _playerData[p.SteamID];
             
             if (team1Total <= team2Total && team1Count < (players.Count + 1) / 2)
             {
-                // Switch to Terrorist (team 2)
-                player.TeamNum = 2;
-                team1Total += playerData.ELO;
+                p.TeamNum = 2; // T
+                team1Total += data.ELO;
                 team1Count++;
-                Console.WriteLine($"[FaceIT] ➡️  {playerData.Nickname} -> T (ELO: {playerData.ELO})");
+                Console.WriteLine($"[FaceIT] {data.Nickname} -> T (ELO: {data.ELO})");
             }
             else
             {
-                // Switch to Counter-Terrorist (team 3)
-                player.TeamNum = 3;
-                team2Total += playerData.ELO;
+                p.TeamNum = 3; // CT
+                team2Total += data.ELO;
                 team2Count++;
-                Console.WriteLine($"[FaceIT] ➡️  {playerData.Nickname} -> CT (ELO: {playerData.ELO})");
+                Console.WriteLine($"[FaceIT] {data.Nickname} -> CT (ELO: {data.ELO})");
             }
         }
 
-        Server.PrintToChatAll($" [FaceIT] ✅ Teams balanced by ELO!");
-        Server.PrintToChatAll($" [FACEIT] █ T: {team1Total} ELO ({team1Count}p) | █ CT: {team2Total} ELO ({team2Count}p)");
-        
-        Console.WriteLine($"[FaceIT] ✅ Balance complete: T={team1Total} ({team1Count}p) vs CT={team2Total} ({team2Count}p)");
+        Server.PrintToChatAll($" [FaceIT] T: {team1Total} ELO ({team1Count}p) | CT: {team2Total} ELO ({team2Count}p)");
+        Console.WriteLine($"[FaceIT] Balance complete: T={team1Total} ({team1Count}p) vs CT={team2Total} ({team2Count}p)");
     }
 
     private void Balance5v5TeamsByELO()
@@ -679,16 +581,15 @@ public class FaceITBalancer : BasePlugin
             .Where(p => _playerData.ContainsKey(p.SteamID) && _playerData[p.SteamID].DataLoaded)
             .ToList();
 
-        Console.WriteLine($"[FaceIT] 🔍 Found {players.Count} players with data for 5v5 balancing");
+        Console.WriteLine($"[FaceIT] Found {players.Count} players with data for 5v5 balancing");
 
         if (players.Count < 10)
         {
-            Server.PrintToChatAll($" [FaceIT] ❌ {players.Count}/10 players with data");
-            Server.PrintToChatAll(" [FaceIT] 💡 Use !getfaceit or !setlevel [1-10]");
+            Server.PrintToChatAll($" [FaceIT] {players.Count}/10 players with FaceIT data");
             return;
         }
 
-        // Sort by ELO (descending) and take first 10 - BALANCING BY ELO
+        // Sorteaz? si ia primii 10
         players.Sort((a, b) => _playerData[b.SteamID].ELO.CompareTo(_playerData[a.SteamID].ELO));
         if (players.Count > 10) 
             players = players.Take(10).ToList();
@@ -697,73 +598,63 @@ public class FaceITBalancer : BasePlugin
         var team2 = new List<CCSPlayerController>();
         int team1Total = 0, team2Total = 0;
 
-        foreach (var player in players)
+        foreach (var p in players)
         {
-            var playerData = _playerData[player.SteamID];
+            var data = _playerData[p.SteamID];
             
             if (team1.Count < 5 && (team1Total <= team2Total || team2.Count >= 5))
             {
-                team1.Add(player);
-                team1Total += playerData.ELO;
-                Console.WriteLine($"[FaceIT] 5v5 ➡️  {playerData.Nickname} -> T (ELO: {playerData.ELO})");
+                team1.Add(p);
+                team1Total += data.ELO;
+                Console.WriteLine($"[FaceIT] 5v5 {data.Nickname} -> T (ELO: {data.ELO})");
             }
             else
             {
-                team2.Add(player);
-                team2Total += playerData.ELO;
-                Console.WriteLine($"[FaceIT] 5v5 ➡️  {playerData.Nickname} -> CT (ELO: {playerData.ELO})");
+                team2.Add(p);
+                team2Total += data.ELO;
+                Console.WriteLine($"[FaceIT] 5v5 {data.Nickname} -> CT (ELO: {data.ELO})");
             }
         }
 
-        // Apply teams
-        foreach (var player in team1) 
-            player.TeamNum = 2; // Terrorist
-        foreach (var player in team2) 
-            player.TeamNum = 3; // Counter-Terrorist
+        foreach (var p in team1) p.TeamNum = 2;
+        foreach (var p in team2) p.TeamNum = 3;
 
-        Server.PrintToChatAll(" [FaceIT] ✅ 5v5 BALANCED by ELO!");
-        Server.PrintToChatAll($" [FACEIT] █ T: {team1Total} ELO | █ CT: {team2Total} ELO");
+        Server.PrintToChatAll(" [FaceIT] 5v5 BALANCED!");
+        Server.PrintToChatAll($" [FACEIT] T: {team1Total} ELO | CT: {team2Total} ELO");
         
-        Console.WriteLine($"[FaceIT] ✅ 5v5 Balance complete: T={team1Total} vs CT={team2Total}");
+        Console.WriteLine($"[FaceIT] 5v5 Balance complete: T={team1Total} vs CT={team2Total}");
     }
 
-    // ================== UTILITY FUNCTIONS ==================
-    private void SetManualData(CCSPlayerController player, int level, int elo)
+    private void ShowELOStatus(CCSPlayerController player)
     {
-        _playerData[player.SteamID] = new PlayerData
+        var playersWithData = _playerData.Where(p => p.Value.DataLoaded).ToList();
+        
+        if (playersWithData.Count == 0)
         {
-            Level = level,
-            ELO = elo,
-            Nickname = player.PlayerName ?? "Manual",
-            DataLoaded = true
-        };
-    }
+            player.PrintToChat(" [FaceIT] No players with FaceIT data loaded");
+            player.PrintToChat(" [FaceIT] Data loads automatically when players connect");
+            return;
+        }
 
-    private int LevelToELO(int level)
-    {
-        int[] eloMap = { 200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000 };
-        return level >= 1 && level <= 10 ? eloMap[level - 1] : 1000;
-    }
-
-    private int ELOToLevel(int elo)
-    {
-        if (elo < 300) return 1;
-        if (elo < 500) return 2;
-        if (elo < 700) return 3;
-        if (elo < 900) return 4;
-        if (elo < 1100) return 5;
-        if (elo < 1300) return 6;
-        if (elo < 1500) return 7;
-        if (elo < 1700) return 8;
-        if (elo < 1900) return 9;
-        return 10;
-    }
-
-    private bool HasAdminPermissions(CCSPlayerController player)
-    {
-        return AdminManager.PlayerHasPermissions(player, "@css/generic") ||
-               AdminManager.PlayerHasPermissions(player, "@css/ban") ||
-               AdminManager.PlayerHasPermissions(player, "generic");
+        player.PrintToChat(" [FaceIT] Players with FaceIT data:");
+        player.PrintToChat(" [FaceIT] ===============================");
+        
+        var sortedPlayers = playersWithData.OrderByDescending(p => p.Value.ELO).ToList();
+        
+        foreach (var (steamId, data) in sortedPlayers.Take(15))
+        {
+            player.PrintToChat($" [FaceIT] {data.Nickname} | ELO: {data.ELO} | Level: {data.Level}");
+        }
+        
+        if (sortedPlayers.Count > 15)
+        {
+            player.PrintToChat($" [FaceIT] ... and {sortedPlayers.Count - 15} more players");
+        }
+        
+        int totalELO = sortedPlayers.Sum(p => p.Value.ELO);
+        int averageELO = sortedPlayers.Count > 0 ? totalELO / sortedPlayers.Count : 0;
+        
+        player.PrintToChat($" [FaceIT] Total: {sortedPlayers.Count} players | Average ELO: {averageELO}");
     }
 
     public override void Unload(bool hotReload)
