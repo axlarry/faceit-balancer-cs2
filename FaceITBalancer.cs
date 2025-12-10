@@ -145,7 +145,7 @@ public class FaceITBalancer : BasePlugin
         // Timer simplu pentru a detecta playeri noi - doar daca plugin-ul este activ
         AddTimer(5.0f, CheckForNewPlayers, TimerFlags.REPEAT);
         
-        // Timer pentru procesarea cozii de fetch (o dat? pe secund?) - doar daca plugin-ul este activ
+        // Timer pentru procesarea cozii de fetch (o data pe secunda) - doar daca plugin-ul este activ
         AddTimer(1.0f, ProcessFetchQueue, TimerFlags.REPEAT);
     }
 
@@ -347,7 +347,7 @@ public class FaceITBalancer : BasePlugin
         {
             var url = $"https://open.faceit.com/data/v4/players?game=cs2&game_player_id={steamID}";
             
-            // Folosim metoda sincron? GetAsync (f?r? await)
+            // Folosim metoda sincron GetAsync (fara await)
             var task = _httpClient.GetAsync(url);
             task.Wait(); // A?tept?m sincron
             
@@ -467,7 +467,7 @@ public class FaceITBalancer : BasePlugin
 
     private void RegisterCommands()
     {
-        // Comenzi esen?iale
+        // Comenzi esentiale
         AddCommand("css_fbalance", "Balance teams by ELO", OnBalanceCommand);
         AddCommand("css_fbalance5v5", "Balance 5v5 by ELO", OnBalance5v5Command);
         AddCommand("css_elostatus", "Show ELO status of all players", OnELOStatusCommand);
@@ -589,7 +589,7 @@ public class FaceITBalancer : BasePlugin
             return;
         }
 
-        // Sorteaz? si ia primii 10
+        // Sorteaza si ia primii 10
         players.Sort((a, b) => _playerData[b.SteamID].ELO.CompareTo(_playerData[a.SteamID].ELO));
         if (players.Count > 10) 
             players = players.Take(10).ToList();
