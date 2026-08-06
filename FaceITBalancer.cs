@@ -38,7 +38,7 @@ public class FaceITConfig : BasePluginConfig
 public class FaceITBalancer : BasePlugin, IPluginConfig<FaceITConfig>
 {
     public override string ModuleName => "FaceIT Team Balancer";
-    public override string ModuleVersion => "1.0.0";
+    public override string ModuleVersion => "1.2.0";
     public override string ModuleAuthor => "Larry Lacurte.ro";
     public override string ModuleDescription => "Balanseaza echipele dupa ELO-ul de FaceIT";
 
