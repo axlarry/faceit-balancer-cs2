@@ -1,0 +1,17 @@
+# build output
+bin/
+obj/
+*.dll
+*.pdb
+*.deps.json
+*.user
+ 
+# NU comite niciodata configul cu cheia FaceIT
+FaceITBalancer.json
+config.json
+*.local.json
+ 
+# diverse
+.vs/
+.idea/
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "ConfigVersion": 1,
+  "ApiKey": "PUNE_AICI_CHEIA_SERVER_SIDE_DE_LA_FACEIT",
+  "AutoFetchOnConnect": true,
+  "DisableDuringMatch": true,
+  "DefaultElo": 800,
+  "ChatTag": "FaceIT",
+  "MaxConcurrentFetches": 2,
+  "CacheMinutes": 120,
+  "UseMatchZyAdmins": true,
+  "MatchZyAdminsFile": "cfg/MatchZy/admins.json",
+  "CssharpAdminFlag": "@css/generic"
+}
