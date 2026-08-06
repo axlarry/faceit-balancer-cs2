@@ -1,14 +1,27 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net7.0</TargetFramework>
+    <!-- CounterStrikeSharp 1.0.369+ ruleaza pe .NET 10 -->
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputType>Library</OutputType>
+    <AssemblyName>FaceITBalancer</AssemblyName>
+    <RootNamespace>FaceITBalancer</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+
+    <!-- suprascris de build.sh cu versiunea exacta de pe server:
+         dotnet build -c Release -p:CssApiVersion=1.0.371 -->
+    <CssApiVersion Condition="'$(CssApiVersion)' == ''">1.0.371</CssApiVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.25" />
+    <PackageReference Include="CounterStrikeSharp.API" Version="$(CssApiVersion)">
+      <!-- API-ul e furnizat de host, nu il copiem in folderul plugin-ului -->
+      <Private>false</Private>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>
